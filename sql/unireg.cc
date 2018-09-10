@@ -1079,6 +1079,7 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
       null_count+= field->length & 7;
 
     if (field->default_value && !field->default_value->flags &&
+        !field->vers_sys_field() &&
         (!(field->flags & BLOB_FLAG) ||
          field->real_field_type() == MYSQL_TYPE_GEOMETRY))
     {
@@ -1101,6 +1102,7 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
       delete regfield; //To avoid memory leak
     }
     else if (regfield->real_type() == MYSQL_TYPE_ENUM &&
+             !field->vers_sys_field() &&
 	     (field->flags & NOT_NULL_FLAG))
     {
       regfield->set_notnull();
