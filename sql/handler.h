@@ -909,7 +909,7 @@ struct xa_recovery_member
 {
    XID xid;
    enum xa_binlog_state state;
-   bool in_engine_prepare;
+   uint in_engine_prepare;
 };
 
 /* for recover() handlerton call */
@@ -5174,7 +5174,7 @@ int ha_commit_one_phase(THD *thd, bool all, bool binlog_first= false);
 int ha_commit_trans(THD *thd, bool all);
 int ha_rollback_trans(THD *thd, bool all, bool binlog_first= false);
 int ha_prepare(THD *thd);
-int ha_recover(HASH *commit_list, HASH *xa_recover_list);
+int ha_recover(HASH *commit_list, HASH *xa_recover_list, uint *xa_recover_htons);
 
 /* transactions: these functions never call handlerton functions directly */
 int ha_enable_transaction(THD *thd, bool on);
@@ -5300,5 +5300,5 @@ void print_keydup_error(TABLE *table, KEY *key, myf errflag);
 
 int del_global_index_stat(THD *thd, TABLE* table, KEY* key_info);
 int del_global_table_stat(THD *thd, const  LEX_CSTRING *db, const LEX_CSTRING *table);
-uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info);
+uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info, bool count_through);
 #endif /* HANDLER_INCLUDED */

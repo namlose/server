@@ -953,6 +953,7 @@ public:
   MEM_ROOT mem_root;
   char *xa_binlog_checkpoint_name;
   HASH xa_recover_list;
+  uint xa_recover_htons;
 };
 
 class Log_event_handler

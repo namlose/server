@@ -1391,7 +1391,10 @@ int ha_prepare(THD *thd)
         }
         DEBUG_SYNC(thd, "simulate_hang_after_binlog_prepare");
         DBUG_EXECUTE_IF("simulate_crash_after_binlog_prepare",
-            DBUG_SUICIDE(););
+                        if ((ha_info != &thd->ha_data[binlog_hton->slot].ha_info[1] &&
+                             ha_info->next()) ||
+                            ha_info == &thd->ha_data[binlog_hton->slot].ha_info[1])
+                          DBUG_SUICIDE(););
       }
       else
       {
@@ -1416,11 +1419,11 @@ int ha_prepare(THD *thd)
 
 /*
   Like ha_check_and_coalesce_trx_read_only to return counted number of
-  read-write transaction participants limited to two, but works in the 'all'
-  context.
-  Also returns the last found rw ha_info through the 2nd argument.
+  read-write transaction participants optionally limited to two, but
+  works in the 'all' context.
+  Also optionally returns the last found rw ha_info through the 2nd argument.
 */
-uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info)
+uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info, bool count_through)
 {
   unsigned rw_ha_count= 0;
 
@@ -1429,8 +1432,9 @@ uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info)
   {
     if (ha_info->is_trx_read_write())
     {
-      *ptr_ha_info= ha_info;
-      if (++rw_ha_count > 1)
+      if (ptr_ha_info)
+        *ptr_ha_info= ha_info;
+      if (++rw_ha_count > 1 && !count_through)
         break;
     }
   }
@@ -1443,7 +1447,7 @@ uint ha_count_rw_all(THD *thd, Ha_trx_info **ptr_ha_info)
   A helper function to evaluate if two-phase commit is mandatory.
   As a side effect, propagates the read-only/read-write flags
   of the statement transaction to its enclosing normal transaction.
-  
+
   If we have at least two engines with read-write changes we must
   run a two-phase commit. Otherwise we can run several independent
   commits as the only transactional engine has read-write changes
@@ -2328,6 +2332,7 @@ struct xarecover_st
   HASH *commit_list;
   HASH *xa_prepared_list;
   bool dry_run;
+  uint recover_htons;
 };
 
 static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
@@ -2339,6 +2344,7 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
 
   if (hton->recover)
   {
+    info->recover_htons++;
     while ((got= hton->recover(hton, info->list, info->len)) > 0 )
     {
       sql_print_information("Found %d prepared transaction(s) in %s",
@@ -2393,7 +2399,7 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
             if ((member= (xa_recovery_member *)
                  my_hash_search(info->xa_prepared_list, foreign_xid->key(),
                                 foreign_xid->key_length())))
-              member->in_engine_prepare= true;
+              member->in_engine_prepare++;
           }
           continue;
         }
@@ -2441,7 +2447,7 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
   return FALSE;
 }
 
-int ha_recover(HASH *commit_list, HASH *xa_prepared_list)
+int ha_recover(HASH *commit_list, HASH *xa_prepared_list, uint *ptr_count)
 {
   struct xarecover_st info;
   DBUG_ENTER("ha_recover");
@@ -2450,6 +2456,7 @@ int ha_recover(HASH *commit_list, HASH *xa_prepared_list)
   info.xa_prepared_list= xa_prepared_list;
   info.dry_run= (info.commit_list==0 && tc_heuristic_recover==0);
   info.list= NULL;
+  info.recover_htons= 0;
 
   /* commit_list and tc_heuristic_recover cannot be set both */
   DBUG_ASSERT(info.commit_list==0 || tc_heuristic_recover==0);
@@ -2476,14 +2483,14 @@ int ha_recover(HASH *commit_list, HASH *xa_prepared_list)
     DBUG_RETURN(1);
   }
 
-  plugin_foreach(NULL, xarecover_handlerton, 
+  plugin_foreach(NULL, xarecover_handlerton,
                  MYSQL_STORAGE_ENGINE_PLUGIN, &info);
 
   if (ptr_count)
     *ptr_count= info.recover_htons;
   my_free(info.list);
   if (info.found_foreign_xids)
-    sql_print_warning("Found %d prepared XA transactions", 
+    sql_print_warning("Found %d prepared XA transactions",
                       info.found_foreign_xids);
   if (info.dry_run && info.found_my_xids)
   {
