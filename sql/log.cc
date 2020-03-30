@@ -90,7 +90,6 @@ static bool binlog_savepoint_rollback_can_release_mdl(handlerton *hton,
 static int binlog_commit(handlerton *hton, THD *thd, bool all);
 static int binlog_rollback(handlerton *hton, THD *thd, bool all);
 static int binlog_prepare(handlerton *hton, THD *thd, bool all);
-static int binlog_xa_recover_dummy(handlerton *hton, XID *xid_list, uint len);
 static int binlog_commit_by_xid(handlerton *hton, XID *xid);
 static int binlog_rollback_by_xid(handlerton *hton, XID *xid);
 static int binlog_start_consistent_snapshot(handlerton *hton, THD *thd);
@@ -1698,8 +1697,6 @@ int binlog_init(void *p)
     binlog_hton->start_consistent_snapshot= binlog_start_consistent_snapshot;
     binlog_hton->commit_by_xid= binlog_commit_by_xid;
     binlog_hton->rollback_by_xid= binlog_rollback_by_xid;
-    // recover needs to be set to make xa{commit,rollback}_handlerton effective
-    binlog_hton->recover= binlog_xa_recover_dummy;
   }
   binlog_hton->flags= HTON_NOT_USER_SELECTABLE | HTON_HIDDEN;
   return 0;
@@ -2008,15 +2005,6 @@ static int binlog_prepare(handlerton *hton, THD *thd, bool all)
 {
   /* Do nothing unless the transaction is a user XA. */
   return is_preparing_xa(thd) ? binlog_commit(NULL, thd, all) : 0;
-}
-
-
-static int binlog_xa_recover_dummy(handlerton *hton __attribute__((unused)),
-                             XID *xid_list __attribute__((unused)),
-                             uint len __attribute__((unused)))
-{
-  /* Does nothing. */
-  return 0;
 }
 
 

@@ -148,7 +148,7 @@ static TYPELIB known_extensions= {0,"known_exts", NULL, NULL};
 uint known_extensions_id= 0;
 
 static int commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans,
-                              bool is_real_trans);
+                              bool is_real_trans, bool binlog_first= false);
 
 
 static plugin_ref ha_default_plugin(THD *thd)
@@ -1318,6 +1318,48 @@ static int prepare_or_error(handlerton *ht, THD *thd, bool all)
 }
 
 
+
+/**
+  Detect if binlog is present in the current transaction to execute
+  its comletion action.
+  The function is supposed to invoke by XA transaction prepare.
+
+  @return 1 on error or
+          0 otherwise.
+*/
+
+inline int ha_prepare_binlog(THD *thd, Ha_trx_info* ha_info)
+{
+  int error= 0, all= 1;
+
+  if (binlog_hton->prepare &&
+      thd->ha_data[binlog_hton->slot].ha_info[all].is_started())
+  {
+#ifndef DBUG_OFF
+    bool found_binlog;
+    for (found_binlog= false; ha_info; ha_info= ha_info->next())
+      if ((found_binlog= (ha_info->ht() == binlog_hton)))
+        break;
+    DBUG_ASSERT(found_binlog);
+#endif
+
+    if (unlikely(prepare_or_error(binlog_hton, thd, all)))
+    {
+      error= 1;
+      ha_rollback_trans(thd, all);
+    }
+    DEBUG_SYNC(thd, "simulate_hang_after_binlog_prepare");
+    DBUG_EXECUTE_IF("simulate_crash_after_binlog_prepare",
+                    if ((ha_info != &thd->ha_data[binlog_hton->slot].ha_info[1] &&
+                         ha_info->next()) ||
+                        ha_info == &thd->ha_data[binlog_hton->slot].ha_info[1])
+                      DBUG_SUICIDE(););
+  }
+
+  return error;
+}
+
+
 /**
   @retval
     0   ok
@@ -1333,16 +1375,19 @@ int ha_prepare(THD *thd)
 
   if (ha_info)
   {
-    for (; ha_info; ha_info= ha_info->next())
+    for (error= ha_prepare_binlog(thd, ha_info);
+         error == 0 && ha_info; ha_info= ha_info->next())
     {
-      handlerton *ht= ha_info->ht();
+      auto ht= ha_info->ht();
+      if (ht == binlog_hton)
+        continue;
+
       if (ht->prepare)
       {
         if (unlikely(prepare_or_error(ht, thd, all)))
         {
           ha_rollback_trans(thd, all);
           error=1;
-          break;
         }
       }
       else
@@ -1351,7 +1396,6 @@ int ha_prepare(THD *thd)
                             ER_GET_ERRNO, ER_THD(thd, ER_GET_ERRNO),
                             HA_ERR_WRONG_COMMAND,
                             ha_resolve_storage_engine_name(ht));
-
       }
     }
 
@@ -1830,7 +1874,7 @@ end:
                    autocommit=1.
 */
 
-int ha_commit_one_phase(THD *thd, bool all)
+int ha_commit_one_phase(THD *thd, bool all, bool do_binlog_first)
 {
   THD_TRANS *trans=all ? &thd->transaction.all : &thd->transaction.stmt;
   /*
@@ -1856,13 +1900,59 @@ int ha_commit_one_phase(THD *thd, bool all)
     if ((res= thd->wait_for_prior_commit()))
       DBUG_RETURN(res);
   }
-  res= commit_one_phase_2(thd, all, trans, is_real_trans);
+  res= commit_one_phase_2(thd, all, trans, is_real_trans, do_binlog_first);
   DBUG_RETURN(res);
 }
 
 
+/**
+  Detect if binlog is present in the current 'all' transaction to execute
+  its comletion action.
+  The function is supposed to invoke by XA transaction completion.
+
+  @return 1 on error or
+          0 otherwise.
+*/
+
+inline int ha_commit_or_rollback_binlog(THD *thd, Ha_trx_info *ha_info, bool is_commit)
+{
+  int err= 0, all= 1;
+
+  if (thd->ha_data[binlog_hton->slot].ha_info[all].is_started())
+  {
+#ifndef DBUG_OFF
+    DBUG_ASSERT(WSREP_ON || opt_bin_log);
+
+    bool found_binlog;
+    for (found_binlog= false; ha_info; ha_info= ha_info->next())
+      if ((found_binlog= (ha_info->ht() == binlog_hton)))
+        break;
+    DBUG_ASSERT(found_binlog);
+#endif
+    if ((err= is_commit ?
+         binlog_hton->commit  (binlog_hton, thd, all) :
+         binlog_hton->rollback(binlog_hton, thd, all)))
+      my_error(is_commit ? ER_ERROR_DURING_COMMIT : ER_ERROR_DURING_ROLLBACK,
+               MYF(0), err);
+
+    DBUG_EXECUTE_IF("simulate_crash_after_binlog_commit_or_rollack",
+                    DBUG_SUICIDE(););
+  }
+  else
+  {
+#ifndef DBUG_OFF
+    for (; ha_info; ha_info= ha_info->next())
+      DBUG_ASSERT(ha_info->ht() != binlog_hton);
+#endif
+  }
+
+  return err == 0 ? 0 : 1;
+}
+
+
 static int
-commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans)
+commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans,
+                   bool do_binlog_first)
 {
   int error= 0;
   uint count= 0;
@@ -1870,13 +1960,22 @@ commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans)
   DBUG_ENTER("commit_one_phase_2");
   if (is_real_trans)
     DEBUG_SYNC(thd, "commit_one_phase_2");
+
   if (ha_info)
   {
+    int err;
+
+    if ((do_binlog_first= do_binlog_first && binlog_hton->prepare))
+    {
+      DBUG_ASSERT(!do_binlog_first || all);
+
+      error= ha_commit_or_rollback_binlog(thd, ha_info, true);
+    }
     for (; ha_info; ha_info= ha_info_next)
     {
-      int err;
       handlerton *ht= ha_info->ht();
-      if ((err= ht->commit(ht, thd, all)))
+      if (!(ht == binlog_hton && do_binlog_first) &&
+          (err= ht->commit(ht, thd, all)))
       {
         my_error(ER_ERROR_DURING_COMMIT, MYF(0), err);
         error=1;
@@ -1910,8 +2009,7 @@ commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans)
   DBUG_RETURN(error);
 }
 
-
-int ha_rollback_trans(THD *thd, bool all)
+int ha_rollback_trans(THD *thd, bool all, bool do_binlog_first)
 {
   int error=0;
   THD_TRANS *trans=all ? &thd->transaction.all : &thd->transaction.stmt;
@@ -1983,11 +2081,18 @@ int ha_rollback_trans(THD *thd, bool all)
     if (is_real_trans)                          /* not a statement commit */
       thd->stmt_map.close_transient_cursors();
 
+    if ((do_binlog_first= do_binlog_first && binlog_hton->prepare))
+    {
+      DBUG_ASSERT(!do_binlog_first || all);
+
+      error= ha_commit_or_rollback_binlog(thd, ha_info, false);
+    }
     for (; ha_info; ha_info= ha_info_next)
     {
       int err;
       handlerton *ht= ha_info->ht();
-      if ((err= ht->rollback(ht, thd, all)))
+      if (!(ht == binlog_hton && do_binlog_first) &&
+          (err= ht->rollback(ht, thd, all)))
       { // cannot happen
         my_error(ER_ERROR_DURING_ROLLBACK, MYF(0), err);
         error=1;
@@ -2097,6 +2202,14 @@ int ha_commit_or_rollback_by_xid(XID *xid, bool commit)
   struct xahton_st xaop;
   xaop.xid= xid;
   xaop.result= 1;
+
+  if (binlog_hton->prepare)
+  {
+    if (commit)
+      binlog_hton->commit_by_xid(binlog_hton, xid);
+    else
+      binlog_hton->rollback_by_xid(binlog_hton, xid);
+  }
 
   plugin_foreach(NULL, commit ? xacommit_handlerton : xarollback_handlerton,
                  MYSQL_STORAGE_ENGINE_PLUGIN, &xaop);
@@ -2347,6 +2460,8 @@ int ha_recover(HASH *commit_list)
   plugin_foreach(NULL, xarecover_handlerton, 
                  MYSQL_STORAGE_ENGINE_PLUGIN, &info);
 
+  if (ptr_count)
+    *ptr_count= info.recover_htons;
   my_free(info.list);
   if (info.found_foreign_xids)
     sql_print_warning("Found %d prepared XA transactions", 

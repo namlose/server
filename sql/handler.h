@@ -5162,9 +5162,9 @@ int ha_change_key_cache(KEY_CACHE *old_key_cache, KEY_CACHE *new_key_cache);
 /* transactions: interface to handlerton functions */
 int ha_start_consistent_snapshot(THD *thd);
 int ha_commit_or_rollback_by_xid(XID *xid, bool commit);
-int ha_commit_one_phase(THD *thd, bool all);
+int ha_commit_one_phase(THD *thd, bool all, bool binlog_first= false);
 int ha_commit_trans(THD *thd, bool all);
-int ha_rollback_trans(THD *thd, bool all);
+int ha_rollback_trans(THD *thd, bool all, bool binlog_first= false);
 int ha_prepare(THD *thd);
 int ha_recover(HASH *commit_list);
 

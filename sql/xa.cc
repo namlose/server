@@ -390,7 +390,7 @@ bool xa_trans_force_rollback(THD *thd)
 {
   bool rc= false;
 
-  if (ha_rollback_trans(thd, true))
+  if (ha_rollback_trans(thd, true, true))
   {
     my_error(ER_XAER_RMERR, MYF(0));
     rc= true;
@@ -689,7 +689,7 @@ bool trans_xa_commit(THD *thd)
     {
       DEBUG_SYNC(thd, "trans_xa_commit_after_acquire_commit_lock");
 
-      if ((res= MY_TEST(ha_commit_one_phase(thd, 1))))
+      if ((res= MY_TEST(ha_commit_one_phase(thd, 1, true /* binlog_first */))))
         my_error(ER_XAER_RMERR, MYF(0));
       else
       {
