@@ -1,0 +1,120 @@
+--source include/have_sequence.inc
+CREATE TABLE t1(a INT, b INT);
+INSERT INTO t1 SELECT seq, seq from seq_1_to_100;
+
+set optimizer_trace=1;
+ANALYZE TABLE t1 PERSISTENT FOR COLUMNS (a) INDEXES ();
+
+--echo #
+--echo # For column b no statistics provides, so the estimate cardinality cannot be accurate
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1 WHERE a >= 5 and b <= 6;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+ANALYZE TABLE t1 PERSISTENT FOR COLUMNS (b) INDEXES ();
+
+--echo #
+--echo # Estimate for join cardinality should be accurate
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1 WHERE a >= 5 and b <= 6;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+--echo #
+--echo # For disjunctive condition we don't expect correct estimates for join cardinality
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1 WHERE a >= 5 or b <= 6;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+--echo #
+--echo # Estimate for join cardinality should be accurate
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1 WHERE a IN (1,2,3);
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+
+
+--echo #
+--echo # Estimate for join cardinality should be accurate
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1 WHERE a between 1 and 5;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+
+CREATE TABLE t2 (a int, b VARCHAR(3));
+INSERT INTO t2 VALUES (1, 'bar'),(2, 'baz'), (3, 'bc'), (4, 'fgh'), (5, 'xyz');
+ANALYZE TABLE t2 PERSISTENT FOR ALL;
+
+EXPLAIN EXTENDED SELECT * from t2 WHERE b LIKE 'b%';
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+EXPLAIN EXTENDED SELECT * from t2 WHERE b LIKE 'ba%';
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+
+--echo #
+--echo # No range here so selectivity is not possible to be computed here, maybe with optimizer_use_condition_selectivity=5
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t2 WHERE b LIKE '%b%';
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+drop table t1, t2;
+
+
+--echo #
+--echo #  TESTS with equi-join conditions
+--echo #
+
+CREATE TABLE t1(a INT, b INT, key key1(a,b));
+INSERT INTO t1 SELECT seq, seq from seq_1_to_100;
+
+CREATE TABLE t2(a INT, b INT);
+INSERT INTO t2 SELECT seq, seq from seq_1_to_100;
+
+--echo #
+--echo # For the column t2.a, number of distinct values is unknown
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1,t2 WHERE t1.a=t2.a;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+ALTER TABLE t2 ADD INDEX key1(a);
+
+--echo #
+--echo # For the column t2.a, number of distinct values is known with index key1
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1,t2 WHERE t1.a=t2.a;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+
+--echo #
+--echo # For the column t2.b and t1.b, number of distinct values is unknown
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1,t2 WHERE t1.a=t2.a and t1.b=t2.b;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+--echo #
+--echo # t1.a = const but for t2.a number of distinct values is unknow
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1,t2 WHERE t1.a=t2.a and t1.a=1;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+
+ANALYZE TABLE t1 PERSISTENT FOR ALL;
+ANALYZE TABLE t2 PERSISTENT FOR ALL;
+
+--echo #
+--echo # EITS gives distinct values for all columns in this case
+--echo #
+
+EXPLAIN EXTENDED SELECT * from t1,t2 WHERE t1.a=t2.a and t1.b=t2.b;
+SELECT JSON_DETAILED(JSON_EXTRACT(trace, '$**.cardinality_accurate')) FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE;
+
+drop table t1, t2;

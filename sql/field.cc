@@ -11079,6 +11079,13 @@ void Field::print_key_value_binary(String *out, const uchar* key, uint32 length)
 }
 
 
+bool Field::is_first_component_of_key(KEY *key)
+{
+  DBUG_ASSERT(key->usable_key_parts >= 1);
+  return eq(key->key_part->field);
+}
+
+
 Virtual_column_info* Virtual_column_info::clone(THD *thd)
 {
   Virtual_column_info* dst= new (thd->mem_root) Virtual_column_info(*this);

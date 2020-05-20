@@ -1790,6 +1790,10 @@ public:
   void make_notnull_conds_for_range_scans();
 
   bool transform_in_predicates_into_in_subq(THD *thd);
+
+  bool is_item_selectivity_covered(Item *item);
+  bool all_selectivity_accounted_for_join_cardinality();
+
 private:
   /**
     Create a temporary table to be used for processing DISTINCT/ORDER

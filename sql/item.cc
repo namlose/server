@@ -402,6 +402,7 @@ int Item::save_str_value_in_field(Field *field, String *result)
 
 
 Item::Item(THD *thd):
+  n_selectivity_estimates(0),
   is_expensive_cache(-1), rsize(0), name(null_clex_str), orig_name(0),
   common_flags(IS_AUTO_GENERATED_NAME)
 {
@@ -451,6 +452,7 @@ const TABLE_SHARE *Item::field_table_or_null()
 Item::Item(THD *thd, Item *item):
   Type_all_attributes(*item),
   join_tab_idx(item->join_tab_idx),
+  n_selectivity_estimates(0),
   is_expensive_cache(-1),
   rsize(0),
   str_value(item->str_value),

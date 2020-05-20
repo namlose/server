@@ -442,6 +442,8 @@ public:
 };
 
 
+bool sel_tree_non_empty(SEL_TREE *tree);
+
 /**
   A class for functions and operators that can use the range optimizer and
   have a reverse function/operator that can also use the range optimizer,
@@ -499,6 +501,8 @@ public:
     if (!(ftree= get_full_func_mm_tree_for_args(param, args[0], args[1])) &&
         !(ftree= get_full_func_mm_tree_for_args(param, args[1], args[0])))
       ftree= Item_func::get_mm_tree(param, cond_ptr);
+    if (sel_tree_non_empty(ftree))
+      n_selectivity_estimates++;
     DBUG_RETURN(ftree);
   }
 };
@@ -2544,6 +2548,10 @@ public:
     SEL_TREE *ftree= get_full_func_mm_tree_for_args(param, args[0], NULL);
     if (!ftree)
       ftree= Item_func::get_mm_tree(param, cond_ptr);
+
+    if (sel_tree_non_empty(ftree))
+      n_selectivity_estimates++;
+
     DBUG_RETURN(ftree);
   }
   CHARSET_INFO *compare_collation() const
@@ -3205,6 +3213,8 @@ public:
   friend class Item_equal_fields_iterator;
   bool count_sargable_conds(void *arg);
   Item *multiple_equality_transformer(THD *thd, uchar *arg);
+  bool is_covered_by_keys();
+  bool is_covered_by_eits();
   friend class Item_equal_iterator<List_iterator_fast,Item>;
   friend class Item_equal_iterator<List_iterator,Item>;
   friend Item *eliminate_item_equal(THD *thd, COND *cond,

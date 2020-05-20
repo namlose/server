@@ -8289,6 +8289,9 @@ choose_plan(JOIN *join, table_map join_tables)
             jtab_sort_func, (void*)join->emb_sjm_nest);
 
   Json_writer_object wrapper(thd);
+
+  wrapper.add("cardinality_accurate", join->all_selectivity_accounted_for_join_cardinality());
+
   Json_writer_array trace_plan(thd,"considered_execution_plans");
 
   if (!join->emb_sjm_nest)
@@ -29310,6 +29313,92 @@ void build_notnull_conds_for_inner_nest_of_outer_join(JOIN *join,
       }
     }
   }
+}
+
+
+bool JOIN::is_item_selectivity_covered(Item *item)
+{
+  if (item->type() == Item::FUNC_ITEM &&
+      ((Item_func*)item)->functype() == Item_func::MULT_EQUAL_FUNC)
+  {
+    // need to think of this implementation
+    Item_equal *item_eq= (Item_equal* )item;
+    if (item_eq->is_covered_by_keys())
+      return true;
+    /*
+      For equality conditions like tbl1.col = tbl2.col
+
+      We would have an Item_equal(tbl1.col, tbl2.col)
+      a) If EITS is available then there is no issue,
+          avg frequence is available
+      b) If EITS is not available then the col should be the
+         first component of an index.
+    */
+    return item_eq->is_covered_by_eits();
+  }
+  else
+  {
+    // not a multiple equality.
+    if (item->n_selectivity_estimates)
+      return true; // EITS or range analyzer have provided the estimates.
+  }
+
+  // This is something that we don't have selectivity for
+  return false;
+}
+
+
+/*
+  @brief Check if selectivity is accounted for all parts of the WHERE condition
+
+  @detail
+    The analysis is done as follows: we require that the WHERE clause has form
+
+      simple_pred1 AND ... AND simple_predN
+
+    Where each simple_pred{i} is either
+    - a comparison e.g. "col < const" for which range and/or EITS analyzer
+      produced a range.
+    - A multiple equality:  col1=col2=col3= ...
+      Multiple equality must be "covered" by equalities and for each
+      column in the multiple equality number of distinct values for the column
+      is known
+
+  @param
+
+*/
+bool
+JOIN::all_selectivity_accounted_for_join_cardinality()
+{
+  if (!conds)
+    return true;
+
+  if (conds->type() == Item::COND_ITEM &&
+      (((Item_cond*) conds)->functype() == Item_func::COND_AND_FUNC))
+  {
+    List_iterator<Item> li(*((Item_cond*) conds)->argument_list());
+    Item *item;
+    while ((item= li++))
+    {
+      if (!is_item_selectivity_covered(item))
+        return false;
+    }
+  }
+  else
+  {
+    /*
+      TODO varun:
+      FOR OR conditions there are cases when the entire OR  condition is dependent on a column
+      then we would have correct estimates for join cardinality.
+
+      Eg:
+         select * from t1 where t1.a = 2 or t1.a=3
+         so with an index on t1.a we would get accuare estimates.
+    */
+    return is_item_selectivity_covered(conds);
+  }
+
+  return true;
 }
 
 
