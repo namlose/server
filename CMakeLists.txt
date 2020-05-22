@@ -211,6 +211,7 @@ IF (WITH_ASAN)
     MESSAGE(FATAL_ERROR "Do not know how to enable address sanitizer")
   ENDIF()
   SET(PLUGIN_ROCKSDB "NO" CACHE STRING "RocksDB is not ASAN-clean, disable it")
+  SET(PLUGIN_TOKUDB "NO" CACHE STRING "TokuDB is deprecated, don't run ASAN on it")
 ENDIF()
 
 OPTION(WITH_UBSAN "Enable undefined behavior sanitizer" OFF)
