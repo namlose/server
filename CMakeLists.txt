@@ -210,6 +210,7 @@ IF (WITH_ASAN)
   IF(NOT WITH_ASAN_OK)
     MESSAGE(FATAL_ERROR "Do not know how to enable address sanitizer")
   ENDIF()
+  SET(PLUGIN_ROCKSDB "NO" CACHE STRING "RocksDB is not ASAN-clean, disable it")
 ENDIF()
 
 OPTION(WITH_UBSAN "Enable undefined behavior sanitizer" OFF)
