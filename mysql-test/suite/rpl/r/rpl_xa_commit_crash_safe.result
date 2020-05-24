@@ -16,7 +16,7 @@ XA START 'xa2';
 INSERT INTO t VALUES (40);
 XA END 'xa2';
 XA PREPARE 'xa2';
-SET GLOBAL DEBUG_DBUG="d,simulate_crash_after_binlog_commit";
+SET GLOBAL DEBUG_DBUG="d,simulate_crash_after_binlog_commit_or_rollack";
 XA COMMIT 'xa2';
 ERROR HY000: Lost connection to MySQL server during query
 connection master1;

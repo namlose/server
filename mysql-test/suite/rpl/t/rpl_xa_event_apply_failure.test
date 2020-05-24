@@ -54,7 +54,7 @@ XA PREPARE 'xa2';
 wait
 EOF
 
-SET GLOBAL DEBUG_DBUG="d,simulate_crash_after_binlog_commit";
+SET GLOBAL DEBUG_DBUG="d,simulate_crash_after_binlog_commit_or_rollack";
 --error 2013 # CR_SERVER_LOST
 XA COMMIT 'xa2';
 --source include/wait_until_disconnected.inc
