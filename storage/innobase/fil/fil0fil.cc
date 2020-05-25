@@ -50,6 +50,7 @@ Created 10/25/1995 Heikki Tuuri
 #include "sync0sync.h"
 #include "buf0flu.h"
 #include "os0api.h"
+#include "tpool.h"
 #ifdef UNIV_LINUX
 # include <sys/types.h>
 # include <sys/sysmacros.h>
@@ -160,7 +161,7 @@ it is an absolute path. */
 const char*	fil_path_to_mysql_datadir;
 
 /** Common InnoDB file extensions */
-const char* dot_ext[] = { "", ".ibd", ".isl", ".cfg" };
+const char* dot_ext[]= {"", ".ibd", ".isl", ".cfg", ".trash"};
 
 /** Number of pending tablespace flushes */
 ulint	fil_n_pending_tablespace_flushes	= 0;
@@ -2355,15 +2356,19 @@ dberr_t fil_delete_tablespace(ulint id, bool if_exists)
 		log_mutex_exit();
 		fil_space_free_low(space);
 
-		if (!os_file_delete(innodb_data_file_key, path)
-		    && !os_file_delete_if_exists(
-			    innodb_data_file_key, path, NULL)) {
-
-			/* Note: This is because we have removed the
-			tablespace instance from the cache. */
-
-			err = DB_IO_ERROR;
+		if (os_file_exists(path)) {
+			if (!os_file_rename(innodb_data_file_key, path,
+					    os_unique_file_name(
+						    fil_path_to_mysql_datadir,
+						    dot_ext[TRASH])
+						    .c_str())) {
+				err = DB_IO_ERROR;
+			} else {
+				srv_thread_pool->submit_task(
+					&file_remove_task);
+			}
 		}
+
 	} else {
 		mutex_exit(&fil_system.mutex);
 		err = DB_TABLESPACE_NOT_FOUND;
@@ -4369,7 +4374,17 @@ fil_delete_file(
 	/* Force a delete of any stale .ibd files that are lying around. */
 
 	ib::info() << "Deleting " << ibd_filepath;
-	os_file_delete_if_exists(innodb_data_file_key, ibd_filepath, NULL);
+	if (os_file_exists(ibd_filepath)) {
+		if (!os_file_rename(
+			    innodb_data_file_key, ibd_filepath,
+			    os_unique_file_name(fil_path_to_mysql_datadir,
+						dot_ext[TRASH])
+				    .c_str())) {
+			ib::error() << "Failed to rename " << ibd_filepath;
+		} else {
+			srv_thread_pool->submit_task(&file_remove_task);
+		}
+	}
 
 	char*	cfg_filepath = fil_make_filepath(
 		ibd_filepath, NULL, CFG, false);
@@ -4758,3 +4773,43 @@ bool fil_space_t::is_in_rotation_list() const
   return static_cast<const intrusive::list_node<rotation_list_tag_t> *>(this)
       ->next;
 }
+
+namespace {
+
+// copied from backup_copy.cc
+bool ends_with(const char *str, const char *suffix)
+{
+  size_t suffix_len= strlen(suffix);
+  size_t str_len= strlen(str);
+  return (str_len >= suffix_len &&
+          strcmp(str + str_len - suffix_len, suffix) == 0);
+}
+
+void file_remove_callback(void *)
+{
+  const char *path= fil_path_to_mysql_datadir;
+  dberr_t err;
+  os_file_dir_t dir= os_file_opendir(path, true);
+  ut_a(dir);
+
+  os_file_stat_t stat;
+  for (int ret= fil_file_readdir_next_file(&err, path, dir, &stat); ret == 0;
+       ret= fil_file_readdir_next_file(&err, path, dir, &stat))
+  {
+    if (stat.type != OS_FILE_TYPE_FILE)
+      continue;
+
+    if (!ends_with(stat.name, dot_ext[TRASH]))
+      continue;
+
+    if (!os_file_delete(innodb_data_file_key, stat.name))
+      ib::error() << "Can not remove file " << stat.name;
+  }
+}
+
+tpool::task_group file_remove_task_group(1);
+
+} // namespace
+
+tpool::task file_remove_task(file_remove_callback, nullptr,
+                             &file_remove_task_group);

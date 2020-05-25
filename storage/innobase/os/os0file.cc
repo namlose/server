@@ -80,6 +80,7 @@ Created 10/21/1995 Heikki Tuuri
 
 #include <thread>
 #include <chrono>
+#include <sstream>
 
 /* Per-IO operation environment*/
 class io_slots
@@ -4604,4 +4605,17 @@ os_normalize_path(
 			}
 		}
 	}
+}
+
+std::string os_unique_file_name(const std::string& path,
+				const std::string& suffix)
+{
+  std::ostringstream ss;
+  ss << path;
+  if (path.empty() || path.back() != OS_PATH_SEPARATOR)
+    ss << OS_PATH_SEPARATOR;
+  ss << std::this_thread::get_id()
+     << std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count() << suffix;
+  return ss.str();
 }

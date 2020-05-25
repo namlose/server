@@ -616,7 +616,8 @@ enum ib_extention {
 	NO_EXT = 0,
 	IBD = 1,
 	ISL = 2,
-	CFG = 3
+	CFG = 3,
+	TRASH = 4,
 };
 extern const char* dot_ext[];
 #define DOT_IBD dot_ext[IBD]
@@ -1539,6 +1540,8 @@ void test_make_filepath();
 UNIV_INTERN
 ulint
 fil_space_get_block_size(const fil_space_t* space, unsigned offset);
+
+extern tpool::task file_remove_task;
 
 #include "fil0fil.ic"
 #endif /* UNIV_INNOCHECKSUM */

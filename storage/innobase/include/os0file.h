@@ -46,6 +46,8 @@ Created 10/21/1995 Heikki Tuuri
 #include <time.h>
 #endif /* !_WIN32 */
 
+#include <string>
+
 /** File node of a tablespace or the log data space */
 struct fil_node_t;
 struct fil_space_t;
@@ -1400,6 +1402,14 @@ os_file_get_status(
 	bool		check_rw_perm,
 	bool		read_only);
 
+/** Checks whether path exists
+@return true when path exists and false otherwise */
+static inline bool os_file_exists(const char* path)
+{
+  os_file_stat_t stat;
+  return os_file_get_status(path, &stat, false, true) == DB_SUCCESS;
+}
+
 /** Set the file create umask
 @param[in]	umask		The umask to use for file creation. */
 void
@@ -1477,6 +1487,19 @@ is_absolute_path(
 
 	return(false);
 }
+
+/** Returns unique file name
+@param[in]	path	file path
+@param[in]	suffix	file name suffix, an extension, f.ex
+@retval unique file path as a string */
+std::string os_unique_file_name(const std::string &path
+#ifdef _WIN32
+                                = ".\"
+#else
+                                = "./"
+#endif
+                                ,
+                                const std::string &suffix= "");
 
 #include "os0file.ic"
 

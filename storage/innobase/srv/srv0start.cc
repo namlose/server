@@ -2033,6 +2033,9 @@ skip_monitors:
 		srv_start_state |= SRV_START_STATE_REDO;
 	}
 
+	// Remove what could left from previous server run.
+	srv_thread_pool->submit_task(&file_remove_task);
+
 	return(DB_SUCCESS);
 }
 
